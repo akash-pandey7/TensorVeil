@@ -24,11 +24,11 @@ Maybe you can't share your actual user database because of privacy laws (GDPR/HI
 ```text
 TensorVeil/
 ├── src/
-│   ├── analyzer.py       # The Detective: Figures out your data structure
+│   ├── analyzer.py       # The Detective: Figures out the data structure
 │   └── generator.py      # The Artist: Learns patterns and draws new data
 ├── main.py               # The Boss: Ties everything together
 ├── requirements.txt      # The fuel
-└── README.md             # You are here
+└── README.md
 
 ```
 ## 🏃‍♂️ Quick Start
