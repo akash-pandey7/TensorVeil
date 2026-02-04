@@ -1,10 +1,5 @@
-pandas
-numpy
-scikit-learn
-matplotlib
-seaborn
-torch
-sdv
-opacus
 streamlit
-jupyter
+pandas
+ctgan
+joblib
+openpyxl
