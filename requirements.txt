@@ -3,3 +3,4 @@ pandas
 ctgan
 joblib
 openpyxl
+matplotlib>=3.5.0
