@@ -1,4 +1,5 @@
-import streamlit as st
+import matplotlib.pyplot as plt
+import streamlit as st # type: ignore
 import pandas as pd
 
 from src.analyzer import analyze_data
@@ -87,15 +88,69 @@ with tab2:
 
 # TAB3
 with tab3:
-    st.header("Download")
+    st.header("Quality Inspection & Export")
     
     if st.session_state["synthetic_data"] is not None:
-        csv = st.session_state["synthetic_data"].to_csv(index = False).encode("utf-8")
+        # 1. Selector
+        selected_col = st.selectbox(
+            label="Select Column to Compare", 
+            options=st.session_state["synthetic_data"].columns
+        )
+        
+        # 2. Vital Stats (Side-by-Side)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(
+                label="Real Data Unique Values", 
+                value=st.session_state['df'][selected_col].nunique()
+            )
+        with col2:
+            st.metric(
+                label="Synthetic Data Unique Values", 
+                value=st.session_state['synthetic_data'][selected_col].nunique()
+            )
+            
+        # 3. Determine Data Type
+        # We check if the Real Data column is a number (int or float)
+        is_numeric = pd.api.types.is_numeric_dtype(st.session_state['df'][selected_col])
+        
+        # 4. Plotting Logic
+        if is_numeric:
+            st.subheader(f"Distribution of {selected_col}")
+            
+            fig, ax = plt.subplots(figsize=(10, 4))
+            
+            # Plot Real Data as a solid, light color
+            ax.hist(st.session_state['df'][selected_col], bins=20, density=True, label="Real", alpha=0.5, color='blue')
+            
+            # Plot Synthetic Data as a thick, dark OUTLINE (step)
+            # This makes it easy to see "through" the data
+            ax.hist(st.session_state['synthetic_data'][selected_col], bins=20, density=True, label="Synthetic", histtype='step', linewidth=2, color='black')
+            
+            ax.set_title("Real (Blue) vs. Synthetic (Black Outline)")
+            ax.legend()
+            st.pyplot(fig)
+        else:
+            st.subheader(f"Count of {selected_col}")
+            # Fix: Streamlit's built-in bar chart is safer for text categories than Matplotlib
+            real_counts = st.session_state['df'][selected_col].value_counts()
+            syn_counts = st.session_state['synthetic_data'][selected_col].value_counts()
+            
+            # Combine into a clean table for plotting
+            chart_data = pd.DataFrame({
+                "Real": real_counts,
+                "Synthetic": syn_counts
+            })
+            st.bar_chart(chart_data)
+
+        # 5. Download Button
+        st.divider() # Adds a nice line separator
+        csv = st.session_state["synthetic_data"].to_csv(index=False).encode("utf-8")
         st.download_button(
-            label="📥 Download CSV",
+            label="📥 Download Synthetic CSV",
             data=csv,
             file_name="tensorveil_synthetic.csv",
             mime="text/csv"
         )
     else:
-        st.info("Generate data in Tab 2 first.")
+        st.info("⚠️ Please generate data in Tab 2 first.")
