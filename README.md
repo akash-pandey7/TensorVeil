@@ -27,7 +27,7 @@ The project follows a modular design for scalability:
 ## 🛠️ Tech Stack
 
 * **Language:** Python 3.x
-* **Core Logic:** CTGAN (SDV), PyTorch, Pandas
+* **Core Logic:** CTGAN (SDV), Pandas, Numpy
 * **Visualization:** Matplotlib, Streamlit Charts
 * **Interface:** Streamlit
 * **Utils:** Joblib (for threading optimization)
