@@ -4,3 +4,4 @@ ctgan
 joblib
 openpyxl
 matplotlib>=3.5.0
+st-supabase-connection
