@@ -2,12 +2,30 @@ import matplotlib.pyplot as plt
 import streamlit as st # type: ignore
 import pandas as pd
 
+from st_supabase_connection import SupabaseConnection
 from src.analyzer import analyze_data
 from src.generator import TensorVeilGenerator
 
 # CONFIGURATION
 st.set_page_config(page_title = "TensorVeil", page_icon = "🛡️", layout = "wide")
 st.title("🛡️ TensorVeil : Synthetic Data Engine")
+
+# Database Connection
+try:
+    supabase_url = st.secrets["supabase"]["url"]
+    supabase_key = st.secrets["supabase"]["key"]
+except FileNotFoundError:
+    st.error("❌ secrets.toml file not found.")
+    st.stop()
+except KeyError:
+    st.error("❌ Secrets found, but [supabase] section or keys are missing.")
+    st.stop()
+conn = st.connection(
+    "supabase",
+    type=SupabaseConnection,
+    url = supabase_url,
+    key = supabase_key
+    )
 
 # SESSION STATE SETUP
 if 'df' not in st.session_state:
@@ -22,7 +40,7 @@ if 'generator_model' not in st.session_state:
     
 
 # UI TABS
-tab1, tab2, tab3 = st.tabs(["📂 1. Upload", "⚙️ 2. Train", "📥 3. Export"])
+tab1, tab2, tab3, tab4 = st.tabs(["📂 1. Upload", "⚙️ 2. Train", "📥 3. Export", "📜 History"])
 
 # TAB1
 with tab1:
@@ -74,7 +92,20 @@ with tab2:
             
             # Save the trained engine to memory
             st.session_state['generator_model'] = gen
-            st.success("Training Complete!")
+            st.success("Training Complete! Model is ready")
+            
+            # Save to database
+            try:
+                with st.spinner("Saving experiment to history..."):
+                    conn.table("experiments").insert({
+                        "dataset_name" : uploaded_file.name,
+                        "epochs" : epochs,
+                        "row_count" : len(df),
+                        "status" : "completed"
+                    }).execute()
+                    st.toast("✅ Experiment saved to Cloud Database!", icon="☁️")
+            except Exception as e:
+                st.error(f"⚠️ Could not save to database: {e}")
             
             # Generate Data
             with st.spinner("Generating..."):
@@ -154,3 +185,40 @@ with tab3:
         )
     else:
         st.info("⚠️ Please generate data in Tab 2 first.")
+
+# TAB4
+with tab4:
+    st.header("📜 Training History")
+    
+    # Fetch data from database
+    try:
+        response = conn.table("experiments").select("*").execute()
+        
+        # Check if data exists
+        if response.data:
+            import pandas as pd
+            history_df = pd.DataFrame(response.data)
+            
+            if "created_at" in history_df.columns:
+                history_df["created_at"] = pd.to_datetime(history_df["created_at"])
+                history_df = history_df.sort_values(by="created_at", ascending=False)
+            
+            display_cols = history_df[["created_at", "dataset_name", "epochs", "row_count", "status"]]
+            available_cols = [c for c in display_cols if c in history_df.columns]
+            
+            st.dataframe(
+                display_cols,
+                column_config={
+                    "created_at": st.column_config.DatetimeColumn("Date", format="D MMM YYYY, h:mm a"),
+                    "dataset_name" : "Dataset",
+                    "epochs" : "Epochs",
+                    "row_count" : "Row Count",
+                    "status" : st.column_config.TextColumn("Status", help="Training status")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No training history found. Run some new experiments")
+    except Exception as e:
+        st.error(f"❌ Error fetching history: {e}")
