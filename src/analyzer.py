@@ -1,8 +1,8 @@
 def analyze_data(df):
-    categorical_column = []
+    categorical_columns = []
     for col in df.columns:
         if df[col].dtype == "object":
-            categorical_column.append(col)
+            categorical_columns.append(col)
         elif df[col].nunique() < 20:
-            categorical_column.append(col)
-    return categorical_column
+            categorical_columns.append(col)
+    return categorical_columns
