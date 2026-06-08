@@ -3,6 +3,6 @@ def analyze_data(df):
     for col in df.columns:
         if df[col].dtype == "object":
             categorical_columns.append(col)
-        elif df[col].nunique() < 20:
+        elif df[col].nunique() / len(df) < 0.05 and df[col].nunique() < 20:
             categorical_columns.append(col)
     return categorical_columns
