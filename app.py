@@ -79,43 +79,57 @@ with tab2:
         with col1:
             epochs = st.number_input("Epochs", min_value = 1, value = 50, step = 10)
         with col2:
-            count = st.number_input("Count", min_value = 1, value = 100)\
+            count = st.number_input("Count", min_value = 1, value = 100)
         
         if st.button("🚀 Start Training"):
             st.write("Initializing Engine...")
-            
-            # CALL GENERATOR MODULE
             gen = TensorVeilGenerator(epochs=epochs)
-            
-            with st.spinner("Training..."):
-                gen.train(st.session_state['df'], st.session_state['categorical_columns'])
-            
-            # Save the trained engine to memory
+
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            gen.train(
+                st.session_state['df'],
+                st.session_state['categorical_columns'],
+                progress_bar=progress_bar,
+                status_text=status_text
+            )
+
             st.session_state['generator_model'] = gen
-            st.success("Training Complete! Model is ready")
-            
+            st.success("Model is ready")
+
+            # Show real loss curve from CTGAN
+            loss_df = gen.get_loss_history()
+            if not loss_df.empty:
+                st.subheader("📉 Training Loss")
+                st.line_chart(loss_df.set_index('Epoch')[['Generator Loss', 'Discriminator Loss']])
+
             # Save to database
+            if "uploaded_file_name" not in st.session_state:
+                st.session_state["uploaded_file_name"] = None
+            if "df" not in st.session_state:
+                st.session_state["df"] = None
             try:
                 with st.spinner("Saving experiment to history..."):
                     conn.table("experiments").insert({
-                        "dataset_name" : uploaded_file.name,
-                        "epochs" : epochs,
-                        "row_count" : len(df),
-                        "status" : "completed"
+                        "dataset_name": st.session_state['uploaded_file_name'],
+                        "epochs": epochs,
+                        "row_count": len(st.session_state['df']),
+                        "status": "completed"
                     }).execute()
                     st.toast("✅ Experiment saved to Cloud Database!", icon="☁️")
             except Exception as e:
                 st.error(f"⚠️ Could not save to database: {e}")
-            
+
             # Generate Data
             with st.spinner("Generating..."):
                 new_data = gen.generate(count)
                 st.session_state['synthetic_data'] = new_data
-            
+
             st.success(f"Generated {len(new_data)} rows!")
             st.dataframe(new_data.head())
-        else:
-            st.warning("Please upload the data in Tab 1 first.")
+    else:
+        st.warning("Please upload the data in Tab 1 first.")
 
 # TAB3
 with tab3:
@@ -196,7 +210,6 @@ with tab4:
         
         # Check if data exists
         if response.data:
-            import pandas as pd
             history_df = pd.DataFrame(response.data)
             
             if "created_at" in history_df.columns:

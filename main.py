@@ -1,16 +1,16 @@
 from joblib import parallel_backend
-from src.analyzer import DataAnalyzer
-from src.generator import DataGenerator
+from src.analyzer import analyze_data
+from src.generator import TensorVeilGenerator
 
 def main():
     # We use the Titanic dataset link again
     URL = "https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv"
-    engine = DataAnalyzer(URL)
+    engine = analyze_data(URL)
 
     # Run
     if engine.load_data():
         print("\n--- Starting Analysis ---")
-        results = engine.get_column_types()
+        results = analyze_data(engine.df)
         
         # Print Results
         for col, dtype in results.items():
@@ -19,7 +19,7 @@ def main():
         print("\n✅ System Check Passed.")
         
         print("--- Starting Generator Training ---")
-        generator = DataGenerator(engine.df)
+        generator = TensorVeilGenerator(engine.df)
         with parallel_backend('threading'):
             generator.train(epochs=20)
         
