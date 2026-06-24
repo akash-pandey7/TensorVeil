@@ -53,8 +53,9 @@ with tab1:
                 df = pd.read_csv(uploaded_file)
             else:
                 df = pd.read_excel(uploaded_file)
-            
+            st.session_state["uploaded_file_name"] = uploaded_file.name
             # Auto clean the null value rows
+            df = df.replace("?", pd.NA)
             if df.isnull().sum().sum() > 0:
                 st.warning("Found empty cells. Removing missing value rows...")
                 df = df.dropna()
@@ -88,12 +89,16 @@ with tab2:
             progress_bar = st.progress(0)
             status_text = st.empty()
 
-            gen.train(
-                st.session_state['df'],
-                st.session_state['categorical_columns'],
-                progress_bar=progress_bar,
-                status_text=status_text
-            )
+            try:
+                gen.train(
+                    st.session_state['df'],
+                    st.session_state['categorical_columns'],
+                    progress_bar=progress_bar,
+                    status_text=status_text
+                )
+            except Exception as e:
+                st.error(f"Training failed: {e}")
+                st.stop()
 
             st.session_state['generator_model'] = gen
             st.success("Model is ready")
@@ -220,7 +225,7 @@ with tab4:
             available_cols = [c for c in display_cols if c in history_df.columns]
             
             st.dataframe(
-                display_cols,
+                display_cols[available_cols],
                 column_config={
                     "created_at": st.column_config.DatetimeColumn("Date", format="D MMM YYYY, h:mm a"),
                     "dataset_name" : "Dataset",
