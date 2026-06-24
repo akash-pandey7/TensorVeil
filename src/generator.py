@@ -1,25 +1,36 @@
 from ctgan import CTGAN
-from joblib import parallel_backend
 import pandas as pd
+import threading
+import time
+import sys
+import io
 
 class TensorVeilGenerator:
     def __init__(self, epochs=50):
         self.epochs = epochs
-        self.model = CTGAN(epochs=epochs, verbose=False)
+        self.model = CTGAN(epochs=epochs, verbose=True)
 
     def train(self, data, categorical_columns, progress_bar=None, status_text=None):
-        import threading
-        import time
-
         training_done = threading.Event()
         training_error = [None]
+        current_epoch = [0]
+
+        class EpochTracker(io.TextIOBase):
+            def write(self, text):
+                if "Epoch" in text or "epoch" in text:
+                    current_epoch[0] += 1
+                sys.__stdout__.write(text)
+                return len(text)
 
         def run():
             try:
-                with parallel_backend('threading'):
-                    self.model.fit(data, categorical_columns)
+                old_stdout = sys.stdout
+                sys.stdout = EpochTracker()
+                self.model.fit(data, categorical_columns)
+                sys.stdout = old_stdout
             except Exception as e:
                 training_error[0] = e
+                print(f"[TensorVeil] Training error: {e}")
             finally:
                 training_done.set()
 
@@ -27,18 +38,12 @@ class TensorVeilGenerator:
         thread.start()
 
         if progress_bar and status_text:
-            estimated_seconds = self.epochs * 0.8
-            elapsed = 0
-            interval = 0.5
-
             while not training_done.is_set():
-                elapsed += interval
-                fake_progress = min(elapsed / estimated_seconds, 0.95)
-                progress_bar.progress(fake_progress)
-                status_text.text(
-                    f"Training... (~{max(0, int(estimated_seconds - elapsed))}s remaining)"
-                )
-                time.sleep(interval)
+                epoch = current_epoch[0]
+                real_progress = min(epoch / self.epochs, 0.99)
+                progress_bar.progress(real_progress)
+                status_text.text(f"Training... Epoch {epoch}/{self.epochs}")
+                time.sleep(0.5)
 
         thread.join()
 
@@ -47,6 +52,7 @@ class TensorVeilGenerator:
 
         if progress_bar and status_text:
             progress_bar.progress(1.0)
+            status_text.text("Training Complete!")
             if not self.model.loss_values.empty:
                 last = self.model.loss_values.iloc[-1]
                 g_loss = last['Generator Loss']
