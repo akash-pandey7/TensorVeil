@@ -5,6 +5,7 @@ import pandas as pd
 from st_supabase_connection import SupabaseConnection
 from src.analyzer import analyze_data
 from src.generator import TensorVeilGenerator
+from src.metrics import aggregate_metrics
 
 # CONFIGURATION
 st.set_page_config(page_title = "TensorVeil", page_icon = "🛡️", layout = "wide")
@@ -14,18 +15,18 @@ st.title("🛡️ TensorVeil : Synthetic Data Engine")
 try:
     supabase_url = st.secrets["supabase"]["url"]
     supabase_key = st.secrets["supabase"]["key"]
-except FileNotFoundError:
-    st.error("❌ secrets.toml file not found.")
-    st.stop()
-except KeyError:
-    st.error("❌ Secrets found, but [supabase] section or keys are missing.")
-    st.stop()
-conn = st.connection(
+    conn = st.connection(
     "supabase",
     type=SupabaseConnection,
     url = supabase_url,
     key = supabase_key
     )
+except FileNotFoundError:
+    st.error("❌ secrets.toml file not found.")
+    conn = None
+except KeyError:
+    st.error("❌ Secrets found, but [supabase] section or keys are missing.")
+    conn = None
 
 # SESSION STATE SETUP
 if 'df' not in st.session_state:
@@ -78,13 +79,13 @@ with tab2:
     if st.session_state['df'] is not None:
         col1, col2 = st.columns(2)
         with col1:
-            epochs = st.number_input("Epochs", min_value = 1, value = 50, step = 10)
+            epochs = st.number_input("Epochs", min_value = 1, value = 250, step = 5)
         with col2:
             count = st.number_input("Count", min_value = 1, value = 100)
         
         if st.button("🚀 Start Training"):
             st.write("Initializing Engine...")
-            gen = TensorVeilGenerator(epochs=epochs)
+            gen = TensorVeilGenerator(epochs=epochs, generator_dim=(256, 256), discriminator_dim=(256, 256), pac=10, batch_size=500)
 
             progress_bar = st.progress(0)
             status_text = st.empty()
@@ -140,6 +141,35 @@ with tab2:
 with tab3:
     st.header("Quality Inspection & Export")
     
+    if st.session_state["synthetic_data"] is not None:
+            # 4. Target Column Selector for Metrics
+            selected_target = st.selectbox(
+                label="Select Target Column for Metrics",
+                options=st.session_state["synthetic_data"].columns
+            )
+            
+            if st.button("📊 Calculate Metrics"):
+                with st.spinner("Calculating metrics..."):
+                    metrics = aggregate_metrics(
+                        st.session_state['df'],
+                        st.session_state['synthetic_data'],
+                        target_column=selected_target,
+                        task = "classification" if selected_target in st.session_state['categorical_columns'] else "regression"
+                    )
+                st.success("Metrics Calculated!")
+                st.metric("Mean Statistical Similarity", f"{metrics['statistical_similarity']['mean_similarity']:.2f}")
+                st.metric("Mean Absolute Correlation Difference", f"{metrics['correlation']['mean_absolute_difference']:.2f}")
+                st.metric("Mean DCR (Distance to Closest Record)", f"{metrics['dcr']['median']:.2f}")
+    
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("TSTR Accuracy", f"{metrics['utility']['tstr']['accuracy']:.2f}")
+                with col2:
+                    st.metric("TRTR Accuracy", f"{metrics['utility']['trtr']['accuracy']:.2f}")
+    
+                with st.expander("View Full Metrics", expanded=False):
+                    st.json(metrics)
+                    
     if st.session_state["synthetic_data"] is not None:
         # 1. Selector
         selected_col = st.selectbox(
