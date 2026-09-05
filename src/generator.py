@@ -2,32 +2,19 @@ from ctgan import CTGAN
 import pandas as pd
 import threading
 import time
-import sys
-import io
 
 class TensorVeilGenerator:
-    def __init__(self, epochs=250, generator_dim=(256, 256), discriminator_dim=(256, 256), pac=10, batch_size=500):
+    def __init__(self, epochs=750, generator_dim=(256, 256), discriminator_dim=(256, 256), pac=10, batch_size=500):
         self.epochs = epochs
         self.model = CTGAN(epochs=epochs, generator_dim=generator_dim, discriminator_dim=discriminator_dim, pac=pac, batch_size=batch_size, verbose=True)
 
     def train(self, data, categorical_columns, progress_bar=None, status_text=None):
         training_done = threading.Event()
         training_error = [None]
-        current_epoch = [0]
-
-        class EpochTracker(io.TextIOBase):
-            def write(self, text):
-                if "Epoch" in text or "epoch" in text:
-                    current_epoch[0] += 1
-                sys.__stdout__.write(text)
-                return len(text)
 
         def run():
             try:
-                old_stdout = sys.stdout
-                sys.stdout = EpochTracker()
                 self.model.fit(data, categorical_columns)
-                sys.stdout = old_stdout
             except Exception as e:
                 training_error[0] = e
                 print(f"[TensorVeil] Training error: {e}")
@@ -39,7 +26,7 @@ class TensorVeilGenerator:
 
         if progress_bar and status_text:
             while not training_done.is_set():
-                epoch = current_epoch[0]
+                epoch = len(self.model.loss_values) if hasattr(self.model, 'loss_values') and self.model.loss_values is not None else 0
                 real_progress = min(epoch / self.epochs, 0.99)
                 progress_bar.progress(real_progress)
                 status_text.text(f"Training... Epoch {epoch}/{self.epochs}")
