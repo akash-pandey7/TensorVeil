@@ -4,6 +4,7 @@ import scipy.stats as st
 from sklearn.model_selection import train_test_split
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.neighbors import NearestNeighbors
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, r2_score
 from sklearn.pipeline import Pipeline
@@ -21,8 +22,8 @@ def calculate_ks_statistic(real_data, synthetic_data):
     - ks_statistic: The KS statistic value.
     - p_value: The p-value associated with the KS test.
     """
-    ks_statistic, p_value = st.ks_2samp(real_data, synthetic_data)
-    return ks_statistic, p_value
+    result = st.ks_2samp(real_data, synthetic_data)
+    return float(result.statistic), float(result.pvalue)
 
 def _as_dataframes(real_data, synthetic_data):
     real = pd.DataFrame(real_data).reset_index(drop=True)
@@ -128,7 +129,9 @@ def calculate_dcr(real_data, synthetic_data):
     scaled = StandardScaler().fit_transform(encoded)
     real_values = scaled[:len(real)]
     synthetic_values = scaled[len(real):]
-    distances = np.sqrt(((synthetic_values[:, None, :] - real_values[None, :, :]) ** 2).sum(axis=2))
+    nn = NearestNeighbors(n_neighbors=1)
+    nn.fit(real_values)
+    distances = nn.kneighbors(synthetic_values, return_distance=True)[0]
     closest = distances.min(axis=1)
     return {
         "distances": closest.tolist(),
