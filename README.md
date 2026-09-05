@@ -1,4 +1,4 @@
-# 🛡️ TensorVeil: Privacy-Preserving Synthetic Data Engine
+# 🛡️ [TensorVeil](https://tensorveil.streamlit.app/): Privacy-Preserving Synthetic Data Engine
 
 TensorVeil is a machine learning application designed to generate high-quality synthetic data that preserves the statistical properties of the original dataset while protecting user privacy. Powered by **CTGAN (Conditional Tabular GANs)**, it allows users to train models on sensitive data, evaluate the result with a built-in quality/utility/privacy metrics suite, and export safe, synthetic replicas.
 
@@ -17,9 +17,7 @@ TensorVeil is a machine learning application designed to generate high-quality s
 * **Optional Experiment History:** Training runs can be logged to a Supabase-backed history table; the core generation and evaluation workflow works fully offline without a database connection.
 * **Modular Architecture:** Built with a scalable, maintainable codebase, with automated tests and CI.
 
-## 🌐 Live Demo
-
-**[Insert your Streamlit Cloud Link Here]**
+## 🌐 Live Demo : **[TensorVeil](https://tensorveil.streamlit.app/)**
 
 ## Project Architecture
 
