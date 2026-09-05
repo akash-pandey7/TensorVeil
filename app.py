@@ -39,6 +39,68 @@ if 'synthetic_data' not in st.session_state:
 if 'generator_model' not in st.session_state:
     st.session_state['generator_model'] = None
     
+if "user" not in st.session_state:
+    st.session_state["user"] = None
+
+with st.sidebar:
+    st.subheader("Account")
+
+    if st.session_state["user"] is not None:
+        st.success(f"Logged in as {st.session_state['user'].email}")
+        if st.button("Log Out"):
+            st.session_state["user"] = None
+            st.rerun()
+    else:
+        auth_mode = st.radio(
+            "Access",
+            options=["Continue without login", "Log In", "Sign Up"],
+            index=0,
+        )
+
+        if auth_mode == "Log In":
+            with st.form("login_form"):
+                email = st.text_input("Email")
+                password = st.text_input("Password", type="password")
+                submitted = st.form_submit_button("Log In")
+                if submitted:
+                    if conn is None:
+                        st.error("❌ Login unavailable — no database connection.")
+                    else:
+                        try:
+                            response = conn.auth.sign_in_with_password(
+                                {"email": email, "password": password}
+                            )
+                            st.session_state["user"] = response.user
+                            st.success("Logged in!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Login failed: {e}")
+
+        elif auth_mode == "Sign Up":
+            with st.form("signup_form"):
+                email = st.text_input("Email")
+                password = st.text_input("Password", type="password")
+                submitted = st.form_submit_button("Sign Up")
+                if submitted:
+                    if conn is None:
+                        st.error("❌ Sign up unavailable — no database connection.")
+                    else:
+                        try:
+                            response = conn.auth.sign_up(
+                                {"email": email, "password": password}
+                            )
+                            if response.user is not None:
+                                st.success(
+                                    "Account created! Check your email to confirm, "
+                                    "then log in above."
+                                )
+                            else:
+                                st.warning("Sign up did not return a user — check your Supabase Auth settings.")
+                        except Exception as e:
+                            st.error(f"Sign up failed: {e}")
+
+        else:
+            st.caption("Using TensorVeil as a guest — your history won't be saved.")
 
 # UI TABS
 tab1, tab2, tab3, tab4 = st.tabs(["📂 1. Upload", "⚙️ 2. Train", "📥 3. Export", "📜 History"])
@@ -111,21 +173,21 @@ with tab2:
                 st.line_chart(loss_df.set_index('Epoch')[['Generator Loss', 'Discriminator Loss']])
 
             # Save to database
-            if "uploaded_file_name" not in st.session_state:
-                st.session_state["uploaded_file_name"] = None
-            if "df" not in st.session_state:
-                st.session_state["df"] = None
-            try:
-                with st.spinner("Saving experiment to history..."):
-                    conn.table("experiments").insert({
-                        "dataset_name": st.session_state['uploaded_file_name'],
-                        "epochs": epochs,
-                        "row_count": len(st.session_state['df']),
-                        "status": "completed"
-                    }).execute()
-                    st.toast("✅ Experiment saved to Cloud Database!", icon="☁️")
-            except Exception as e:
-                st.error(f"⚠️ Could not save to database: {e}")
+            if st.session_state["user"] is not None and conn is not None:
+                try:
+                    with st.spinner("Saving experiment to history..."):
+                        conn.table("experiments").insert({
+                            "user_id": st.session_state["user"].id,
+                            "dataset_name": st.session_state['uploaded_file_name'],
+                            "epochs": epochs,
+                            "row_count": len(st.session_state['df']),
+                            "status": "completed"
+                        }).execute()
+                        st.toast("✅ Experiment saved to your history!", icon="☁️")
+                except Exception as e:
+                    st.error(f"⚠️ Could not save to database: {e}")
+            elif st.session_state["user"] is None:
+                st.caption("Log in to save this run to your history.")
 
             # Generate Data
             with st.spinner("Generating..."):
@@ -238,35 +300,45 @@ with tab3:
 # TAB4
 with tab4:
     st.header("📜 Training History")
-    
-    # Fetch data from database
-    try:
-        response = conn.table("experiments").select("*").execute()
-        
-        # Check if data exists
-        if response.data:
-            history_df = pd.DataFrame(response.data)
-            
-            if "created_at" in history_df.columns:
-                history_df["created_at"] = pd.to_datetime(history_df["created_at"])
-                history_df = history_df.sort_values(by="created_at", ascending=False)
-            
-            display_cols = history_df[["created_at", "dataset_name", "epochs", "row_count", "status"]]
-            available_cols = [c for c in display_cols if c in history_df.columns]
-            
-            st.dataframe(
-                display_cols[available_cols],
-                column_config={
-                    "created_at": st.column_config.DatetimeColumn("Date", format="D MMM YYYY, h:mm a"),
-                    "dataset_name" : "Dataset",
-                    "epochs" : "Epochs",
-                    "row_count" : "Row Count",
-                    "status" : st.column_config.TextColumn("Status", help="Training status")
-                },
-                use_container_width=True,
-                hide_index=True
+
+    if st.session_state["user"] is None:
+        st.info("🔒 Log in from the sidebar to view your saved experiment history.")
+    elif conn is None:
+        st.warning("⚠️ History unavailable — no database connection.")
+    else:
+        # Fetch data from database, scoped to the logged-in user
+        try:
+            response = (
+                conn.table("experiments")
+                .select("*")
+                .eq("user_id", st.session_state["user"].id)
+                .execute()
             )
-        else:
-            st.info("No training history found. Run some new experiments")
-    except Exception as e:
-        st.error(f"❌ Error fetching history: {e}")
+
+            # Check if data exists
+            if response.data:
+                history_df = pd.DataFrame(response.data)
+
+                if "created_at" in history_df.columns:
+                    history_df["created_at"] = pd.to_datetime(history_df["created_at"])
+                    history_df = history_df.sort_values(by="created_at", ascending=False)
+
+                display_cols = history_df[["created_at", "dataset_name", "epochs", "row_count", "status"]]
+                available_cols = [c for c in display_cols if c in history_df.columns]
+
+                st.dataframe(
+                    display_cols[available_cols],
+                    column_config={
+                        "created_at": st.column_config.DatetimeColumn("Date", format="D MMM YYYY, h:mm a"),
+                        "dataset_name": "Dataset",
+                        "epochs": "Epochs",
+                        "row_count": "Row Count",
+                        "status": st.column_config.TextColumn("Status", help="Training status")
+                    },
+                    width="stretch",
+                    hide_index=True
+                )
+            else:
+                st.info("No training history found. Run some new experiments")
+        except Exception as e:
+            st.error(f"❌ Error fetching history: {e}")
