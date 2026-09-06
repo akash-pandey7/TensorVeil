@@ -18,6 +18,7 @@ TensorVeil is a machine learning application designed to generate high-quality s
 * **Modular Architecture:** Built with a scalable, maintainable codebase, with automated tests and CI.
 
 ## 🌐 Live Demo : **[TensorVeil](https://tensorveil.streamlit.app/)**
+> **Note:** Demo may take a moment to wake up if it's been idle.
 
 ## Project Architecture
 
