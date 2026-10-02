@@ -73,11 +73,22 @@ def compare_correlations(real_data, synthetic_data, columns=None):
     real_corr = real[selected].corr()
     synthetic_corr = synthetic[selected].corr()
     difference = (real_corr - synthetic_corr).abs()
+    # A column's correlation with itself is always 1 in both matrices, so the
+    # diagonal is always exactly 0 difference. Averaging it in alongside the
+    # real off-diagonal pairs artificially deflates the score — more so the
+    # fewer numeric columns there are (1/3 of a 3-column matrix is diagonal).
+    # Compare each pair once, upper triangle only, diagonal excluded.
+    if len(selected) > 1:
+        upper_triangle = np.triu(np.ones(difference.shape, dtype=bool), k=1)
+        mean_absolute_difference = float(difference.to_numpy()[upper_triangle].mean())
+    else:
+        # A single numeric column has no pairwise correlation to compare.
+        mean_absolute_difference = 0.0
     return {
         "real": real_corr.to_dict(),
         "synthetic": synthetic_corr.to_dict(),
         "absolute_difference": difference.to_dict(),
-        "mean_absolute_difference": float(difference.to_numpy().mean()),
+        "mean_absolute_difference": mean_absolute_difference,
     }
 
 def evaluate_tstr_trtr(real_data, synthetic_data, target_column, task="classification", random_state=42):
@@ -87,7 +98,17 @@ def evaluate_tstr_trtr(real_data, synthetic_data, target_column, task="classific
         raise ValueError(f"unknown target column: {target_column}")
     if task not in {"classification", "regression"}:
         raise ValueError("task must be 'classification' or 'regression'")
-    real_train, real_test = train_test_split(real, test_size=0.2, stratify=real[target_column] if task == "classification" else None, random_state=random_state)
+    if task == "classification":
+        try:
+            real_train, real_test = train_test_split(real, test_size=0.2, stratify=real[target_column], random_state=random_state)
+        except ValueError:
+            # stratify requires every class to have at least 2 members (one
+            # for train, one for test). A rare class with only 1 row raises
+            # here — fall back to an unstratified split rather than crashing
+            # the whole metrics pipeline over one underrepresented class.
+            real_train, real_test = train_test_split(real, test_size=0.2, random_state=random_state)
+    else:
+        real_train, real_test = train_test_split(real, test_size=0.2, random_state=random_state)
 
     features = [column for column in real.columns if column != target_column]
     numeric = real[features].select_dtypes(include=np.number).columns.tolist()
@@ -122,23 +143,52 @@ def evaluate_tstr_trtr(real_data, synthetic_data, target_column, task="classific
     return {"tstr": score(synthetic), "trtr": score(real_train), "task": task, "target_column": target_column}
 
 def calculate_dcr(real_data, synthetic_data):
-    """Calculate the distance-to-closest-record for every synthetic row."""
+    """Calculate the distance-to-closest-record for every synthetic row,
+    plus a real-to-real baseline so the number means something on its own.
+
+    DCR alone is in standardized, one-hot-expanded Euclidean units — it isn't
+    comparable across datasets or column sets, and a value like "2.3" gives
+    no signal about whether synthetic rows are suspiciously close to real
+    ones. Comparing it against how close real rows naturally sit to each
+    other (excluding self-matches) turns it into an interpretable ratio: if
+    synthetic DCR is close to the real-to-real baseline, synthetic rows are
+    about as far from real data as real rows are from each other — no
+    memorization signal. If it's much smaller, synthetic rows are landing
+    suspiciously close to specific real records.
+    """
     real, synthetic = _as_dataframes(real_data, synthetic_data)
     combined = pd.concat([real, synthetic], ignore_index=True)
     encoded = pd.get_dummies(combined, dummy_na=True)
     scaled = StandardScaler().fit_transform(encoded)
     real_values = scaled[:len(real)]
     synthetic_values = scaled[len(real):]
+
     nn = NearestNeighbors(n_neighbors=1)
     nn.fit(real_values)
-    distances = nn.kneighbors(synthetic_values, return_distance=True)[0]
-    closest = distances.min(axis=1)
+    synthetic_distances = nn.kneighbors(synthetic_values, return_distance=True)[0]
+    synthetic_closest = synthetic_distances.min(axis=1)
+
+    real_to_real_median = None
+    ratio_to_real_baseline = None
+    if len(real) > 1:
+        nn_real = NearestNeighbors(n_neighbors=2)
+        nn_real.fit(real_values)
+        real_distances = nn_real.kneighbors(real_values, return_distance=True)[0]
+        # Column 0 is each point matched to itself (distance ~0); column 1 is
+        # the nearest *other* real row — the actual real-to-real baseline.
+        real_to_real_closest = real_distances[:, 1]
+        real_to_real_median = float(np.median(real_to_real_closest))
+        if real_to_real_median > 0:
+            ratio_to_real_baseline = float(np.median(synthetic_closest) / real_to_real_median)
+
     return {
-        "distances": closest.tolist(),
-        "minimum": float(closest.min()),
-        "mean": float(closest.mean()),
-        "median": float(np.median(closest)),
-        "percentile_5": float(np.percentile(closest, 5)),
+        "distances": synthetic_closest.tolist(),
+        "minimum": float(synthetic_closest.min()),
+        "mean": float(synthetic_closest.mean()),
+        "median": float(np.median(synthetic_closest)),
+        "percentile_5": float(np.percentile(synthetic_closest, 5)),
+        "real_to_real_median": real_to_real_median,
+        "ratio_to_real_baseline": ratio_to_real_baseline,
     }
 
 def aggregate_metrics(real_data, synthetic_data, target_column: None, task="classification"):
@@ -147,7 +197,8 @@ def aggregate_metrics(real_data, synthetic_data, target_column: None, task="clas
     statistical = calculate_statistical_similarity(real_data, synthetic_data)
     ks = {column: {"ks_statistic": column_result["ks_statistic"], "p_value": column_result["p_value"]}
         for column, column_result in statistical["columns"].items() if "ks_statistic" in column_result}
-    correlation = compare_correlations(real_data, synthetic_data)
+    numeric_columns = list(real_data.select_dtypes(include=np.number).columns)
+    correlation = compare_correlations(real_data, synthetic_data) if numeric_columns else None
     result = {"statistical_similarity": statistical, "ks_test": ks, "correlation": correlation, "dcr": calculate_dcr(real_data, synthetic_data)}
     if target_column is not None:
         result["utility"] = evaluate_tstr_trtr(real_data, synthetic_data, target_column, task)

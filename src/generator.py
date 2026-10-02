@@ -1,14 +1,28 @@
 from ctgan import CTGAN
-import pandas as pd
 import threading
 import time
+import numpy as np
 
 class TensorVeilGenerator:
     def __init__(self, epochs=750, generator_dim=(256, 256), discriminator_dim=(256, 256), pac=10, batch_size=500):
         self.epochs = epochs
         self.model = CTGAN(epochs=epochs, generator_dim=generator_dim, discriminator_dim=discriminator_dim, pac=pac, batch_size=batch_size, verbose=True)
+        self._column_decimals = {}
+
+    @staticmethod
+    def _infer_decimal_precision(series, max_decimals=6):
+        values = series.dropna().to_numpy(dtype=float)
+        if values.size == 0:
+            return 2
+        for decimals in range(0, max_decimals + 1):
+            if np.allclose(values, np.round(values, decimals), rtol=0, atol=1e-9):
+                return decimals
+        return max_decimals
 
     def train(self, data, categorical_columns, progress_bar=None, status_text=None):
+        numeric_cols = data.select_dtypes(include=[np.number]).columns
+        self._column_decimals = {col: self._infer_decimal_precision(data[col]) for col in numeric_cols}
+
         training_done = threading.Event()
         training_error = [None]
 
@@ -56,5 +70,6 @@ class TensorVeilGenerator:
         synthetic_data = self.model.sample(count)
         numeric_cols = synthetic_data.select_dtypes(include=['float']).columns
         for col in numeric_cols:
-            synthetic_data[col] = synthetic_data[col].round(2)
+            decimals = self._column_decimals.get(col, 2)
+            synthetic_data[col] = synthetic_data[col].round(decimals)
         return synthetic_data
