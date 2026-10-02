@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import streamlit as st # type: ignore
+import numpy as np
 import pandas as pd
+from sklearn.impute import SimpleImputer
 
 from st_supabase_connection import SupabaseConnection
 from src.analyzer import analyze_data
@@ -117,12 +119,57 @@ with tab1:
             else:
                 df = pd.read_excel(uploaded_file)
             st.session_state["uploaded_file_name"] = uploaded_file.name
+
+            # This app runs on shared, CPU-only hosting with no per-user
+            # resource isolation — one person uploading an enormous file
+            # would make CTGAN training slow or unresponsive for everyone
+            # else on the same instance. Downsample rather than reject
+            # outright, so the app stays usable instead of just erroring.
+            MAX_UPLOAD_ROWS = 50_000
+            if len(df) > MAX_UPLOAD_ROWS:
+                original_rows = len(df)
+                df = df.sample(n=MAX_UPLOAD_ROWS, random_state=42).reset_index(drop=True)
+                st.warning(f"Uploaded file has {original_rows:,} rows — randomly sampled down to {MAX_UPLOAD_ROWS:,} to keep training times reasonable on shared hosting.")
+
             # Auto clean the null value rows
             df = df.replace("?", pd.NA)
-            if df.isnull().sum().sum() > 0:
-                st.warning("Found empty cells. Removing missing value rows...")
-                df = df.dropna()
-                st.success("Cleaned missing values.")
+            df = df.where(pd.notna(df), np.nan)
+            
+            DROP_THRESHOLD = 0.55
+            missing_fraction = df.isnull().mean()
+            high_missing_cols = missing_fraction[missing_fraction > DROP_THRESHOLD].index.tolist()
+            report_lines = []
+            if high_missing_cols:
+                for col in high_missing_cols:
+                    report_lines.append(f"- **{col}**: {missing_fraction[col]:.0%} missing — column dropped (exceeds {DROP_THRESHOLD:.0%} threshold)")
+                df = df.drop(columns=high_missing_cols)
+            
+            missing_before = df.isnull().sum()
+            missing_columns = missing_before[missing_before > 0]
+            if len(missing_columns) > 0:
+                numeric_cols = [c for c in missing_columns.index if pd.api.types.is_numeric_dtype(df[c])]
+                categorical_cols = [c for c in missing_columns.index if c not in numeric_cols]
+                
+                if numeric_cols:
+                    numeric_imputer = SimpleImputer(strategy="median").set_output(transform="pandas")
+                    imputed_block = numeric_imputer.fit_transform(df[numeric_cols])
+                    df = df.drop(columns=numeric_cols).join(imputed_block)
+                    for col, stat in zip(imputed_block.columns, numeric_imputer.statistics_):
+                        n_missing = int(missing_columns[col])
+                        report_lines.append(f"- **{col}**: {n_missing} missing values imputed with median {stat}")
+                
+                if categorical_cols:
+                    categorical_imputer = SimpleImputer(strategy="most_frequent").set_output(transform="pandas")
+                    imputed_block = categorical_imputer.fit_transform(df[categorical_cols])
+                    df = df.drop(columns=categorical_cols).join(imputed_block)
+                    for col, stat in zip(imputed_block.columns, categorical_imputer.statistics_):
+                        n_missing = int(missing_columns[col])
+                        report_lines.append(f"- **{col}**: {n_missing} missing values imputed with mode ('{stat}')")
+            
+            if report_lines:
+                st.warning(f"Cleaned up missing data across {len(report_lines)} column(s) — kept all {len(df)} rows.")
+                with st.expander("Missing value handling details"):
+                    st.markdown("\n".join(report_lines))
             st.session_state['df'] = df
             
             # CALL ANALYZER MODULE
@@ -131,6 +178,7 @@ with tab1:
             
             st.success("Data Loaded!")
             st.info(f"Analysis : Found {len(cat_cols)} categorical_columns.")
+            st.write(f"**Dataset Shape:** {df.shape[0]} rows and {df.shape[1]} columns")
             st.dataframe(df.head())
         except Exception as e:
             st.error(f"Error : {e}")
@@ -141,13 +189,39 @@ with tab2:
     if st.session_state['df'] is not None:
         col1, col2 = st.columns(2)
         with col1:
-            epochs = st.number_input("Epochs", min_value = 1, value = 250, step = 5)
+            epochs = st.number_input("Epochs", min_value = 1, max_value = 1000, value = 250, step = 5,
+                                      help="Capped at 1000 — this app runs on shared, CPU-only hosting with no per-user limits, so very high epoch counts can tie up the instance for other users.")
         with col2:
-            count = st.number_input("Count", min_value = 1, value = 100)
+            count = st.number_input("Count", min_value = 1, max_value = 50_000, value = 100,
+                                     help="Capped at 50,000 rows to bound memory and download size on shared hosting.")
+        
+        with st.expander("⚙️ Advanced CTGAN settings"):
+            adv_col1, adv_col2 = st.columns(2)
+            with adv_col1:
+                generator_width = st.number_input("Generator network width", min_value=32, max_value=1024, value=256, step=32,
+                                                    help="Size of each of the generator's two hidden layers. Capped at 1024 to bound training cost on shared hosting.")
+                pac = st.number_input("PAC", min_value=1, max_value=100, value=10, step=1,
+                                        help="Pac size for the discriminator. batch_size must be divisible by this.")
+            with adv_col2:
+                discriminator_width = st.number_input("Discriminator network width", min_value=32, max_value=1024, value=256, step=32,
+                                                        help="Size of each of the discriminator's two hidden layers. Capped at 1024 to bound training cost on shared hosting.")
+                batch_size = st.number_input("Batch size", min_value=pac, max_value=5000, value=500, step=pac,
+                                                help="Must be a multiple of PAC. Capped at 5000 to bound memory use on shared hosting.")
+            if batch_size % pac != 0:
+                st.error(f"Batch size ({batch_size}) must be a multiple of PAC ({pac}). Adjust one of them before training.")
         
         if st.button("🚀 Start Training"):
+            if batch_size % pac != 0:
+                st.error(f"Can't start training: Batch size ({batch_size}) must be a multiple of PAC ({pac}).")
+                st.stop()
             st.write("Initializing Engine...")
-            gen = TensorVeilGenerator(epochs=epochs, generator_dim=(256, 256), discriminator_dim=(256, 256), pac=10, batch_size=500)
+            gen = TensorVeilGenerator(
+                epochs=epochs,
+                generator_dim=(generator_width, generator_width),
+                discriminator_dim=(discriminator_width, discriminator_width),
+                pac=pac,
+                batch_size=batch_size
+            )
 
             progress_bar = st.progress(0)
             status_text = st.empty()
@@ -204,35 +278,54 @@ with tab3:
     st.header("Quality Inspection & Export")
     
     if st.session_state["synthetic_data"] is not None:
-            # 4. Target Column Selector for Metrics
-            selected_target = st.selectbox(
-                label="Select Target Column for Metrics",
-                options=st.session_state["synthetic_data"].columns
-            )
-            
-            if st.button("📊 Calculate Metrics"):
-                with st.spinner("Calculating metrics..."):
-                    metrics = aggregate_metrics(
-                        st.session_state['df'],
-                        st.session_state['synthetic_data'],
-                        target_column=selected_target,
-                        task = "classification" if selected_target in st.session_state['categorical_columns'] else "regression"
-                    )
-                st.success("Metrics Calculated!")
-                st.metric("Mean Statistical Similarity", f"{metrics['statistical_similarity']['mean_similarity']:.2f}")
+        # 4. Target Column Selector for Metrics
+        selected_target = st.selectbox(
+            label="Select Target Column for Metrics",
+            options=st.session_state["synthetic_data"].columns
+        )
+
+        if st.button("📊 Calculate Metrics"):
+            with st.spinner("Calculating metrics..."):
+                metrics = aggregate_metrics(
+                    st.session_state['df'],
+                    st.session_state['synthetic_data'],
+                    target_column=selected_target,
+                    task = "classification" if selected_target in st.session_state['categorical_columns'] else "regression"
+                )
+            st.success("Metrics Calculated!")
+            st.metric("Mean Statistical Similarity", f"{metrics['statistical_similarity']['mean_similarity']:.2f}")
+            if metrics['correlation'] is not None:
                 st.metric("Mean Absolute Correlation Difference", f"{metrics['correlation']['mean_absolute_difference']:.2f}")
-                st.metric("Mean DCR (Distance to Closest Record)", f"{metrics['dcr']['median']:.2f}")
-    
-                col1, col2 = st.columns(2)
+            else:
+                st.info("Correlation comparison needs at least one numeric column — this dataset is all categorical.")
+            st.metric("Median DCR (Distance to Closest Record)", f"{metrics['dcr']['median']:.2f}")
+            dcr_ratio = metrics['dcr']['ratio_to_real_baseline']
+            if dcr_ratio is not None:
+                if dcr_ratio >= 0.8:
+                    st.caption(f"🟢 Synthetic rows sit about as far from real data as real rows sit from each other (ratio: {dcr_ratio:.2f}) — no memorization signal.")
+                elif dcr_ratio >= 0.5:
+                    st.caption(f"🟡 Synthetic rows are somewhat closer to real data than real rows are to each other (ratio: {dcr_ratio:.2f}) — worth a closer look.")
+                else:
+                    st.caption(f"🔴 Synthetic rows are landing suspiciously close to specific real records (ratio: {dcr_ratio:.2f}) — possible memorization.")
+            else:
+                st.caption("Real-to-real baseline unavailable (needs more than one real row) — DCR shown without a reference point.")
+
+            task = metrics['utility']['task']
+            col1, col2 = st.columns(2)
+            if task == "classification":
                 with col1:
                     st.metric("TSTR Accuracy", f"{metrics['utility']['tstr']['accuracy']:.2f}")
                 with col2:
                     st.metric("TRTR Accuracy", f"{metrics['utility']['trtr']['accuracy']:.2f}")
-    
-                with st.expander("View Full Metrics", expanded=False):
-                    st.json(metrics)
-                    
-    if st.session_state["synthetic_data"] is not None:
+            else:
+                with col1:
+                    st.metric("TSTR R²", f"{metrics['utility']['tstr']['r2']:.2f}")
+                with col2:
+                    st.metric("TRTR R²", f"{metrics['utility']['trtr']['r2']:.2f}")
+
+            with st.expander("View Full Metrics", expanded=False):
+                st.json(metrics)
+
         # 1. Selector
         selected_col = st.selectbox(
             label="Select Column to Compare", 
@@ -323,11 +416,12 @@ with tab4:
                     history_df["created_at"] = pd.to_datetime(history_df["created_at"])
                     history_df = history_df.sort_values(by="created_at", ascending=False)
 
-                display_cols = history_df[["created_at", "dataset_name", "epochs", "row_count", "status"]]
-                available_cols = [c for c in display_cols if c in history_df.columns]
+                desired_cols = ["created_at", "dataset_name", "epochs", "row_count", "status"]
+                available_cols = [c for c in desired_cols if c in history_df.columns]
+                display_cols = history_df[available_cols]
 
                 st.dataframe(
-                    display_cols[available_cols],
+                    display_cols,
                     column_config={
                         "created_at": st.column_config.DatetimeColumn("Date", format="D MMM YYYY, h:mm a"),
                         "dataset_name": "Dataset",
