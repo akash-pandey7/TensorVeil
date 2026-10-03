@@ -8,9 +8,14 @@ class TensorVeilGenerator:
         self.epochs = epochs
         self.model = CTGAN(epochs=epochs, generator_dim=generator_dim, discriminator_dim=discriminator_dim, pac=pac, batch_size=batch_size, verbose=True)
         self._column_decimals = {}
+        self.auto_added_categorical_columns = []
 
     @staticmethod
     def _infer_decimal_precision(series, max_decimals=6):
+        """
+        Find the smallest number of decimal places that reproduces this
+        column's real values (within float tolerance), capped at max_decimals.
+        """
         values = series.dropna().to_numpy(dtype=float)
         if values.size == 0:
             return 2
@@ -22,6 +27,11 @@ class TensorVeilGenerator:
     def train(self, data, categorical_columns, progress_bar=None, status_text=None):
         numeric_cols = data.select_dtypes(include=[np.number]).columns
         self._column_decimals = {col: self._infer_decimal_precision(data[col]) for col in numeric_cols}
+        non_numeric_cols = set(data.columns) - set(numeric_cols)
+        self.auto_added_categorical_columns = sorted(c for c in non_numeric_cols if c not in categorical_columns)
+        if self.auto_added_categorical_columns:
+            categorical_columns = list(categorical_columns) + self.auto_added_categorical_columns
+            print(f"[TensorVeil] Auto-added non-numeric column(s) to categorical_columns before training (would otherwise crash CTGAN): {self.auto_added_categorical_columns}")
 
         training_done = threading.Event()
         training_error = [None]
