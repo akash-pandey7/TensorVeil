@@ -66,7 +66,7 @@ with st.sidebar:
                 submitted = st.form_submit_button("Log In")
                 if submitted:
                     if conn is None:
-                        st.error("❌ Login unavailable — no database connection.")
+                        st.error("❌ Login unavailable - no database connection.")
                     else:
                         try:
                             response = conn.auth.sign_in_with_password(
@@ -85,7 +85,7 @@ with st.sidebar:
                 submitted = st.form_submit_button("Sign Up")
                 if submitted:
                     if conn is None:
-                        st.error("❌ Sign up unavailable — no database connection.")
+                        st.error("❌ Sign up unavailable - no database connection.")
                     else:
                         try:
                             response = conn.auth.sign_up(
@@ -97,12 +97,12 @@ with st.sidebar:
                                     "then log in above."
                                 )
                             else:
-                                st.warning("Sign up did not return a user — check your Supabase Auth settings.")
+                                st.warning("Sign up did not return a user - check your Supabase Auth settings.")
                         except Exception as e:
                             st.error(f"Sign up failed: {e}")
 
         else:
-            st.caption("Using TensorVeil as a guest — your history won't be saved.")
+            st.caption("Using TensorVeil as a guest - your history won't be saved.")
 
 # UI TABS
 tab1, tab2, tab3, tab4 = st.tabs(["📂 1. Upload", "⚙️ 2. Train", "📥 3. Export", "📜 History"])
@@ -119,17 +119,11 @@ with tab1:
             else:
                 df = pd.read_excel(uploaded_file)
             st.session_state["uploaded_file_name"] = uploaded_file.name
-
-            # This app runs on shared, CPU-only hosting with no per-user
-            # resource isolation — one person uploading an enormous file
-            # would make CTGAN training slow or unresponsive for everyone
-            # else on the same instance. Downsample rather than reject
-            # outright, so the app stays usable instead of just erroring.
             MAX_UPLOAD_ROWS = 50_000
             if len(df) > MAX_UPLOAD_ROWS:
                 original_rows = len(df)
                 df = df.sample(n=MAX_UPLOAD_ROWS, random_state=42).reset_index(drop=True)
-                st.warning(f"Uploaded file has {original_rows:,} rows — randomly sampled down to {MAX_UPLOAD_ROWS:,} to keep training times reasonable on shared hosting.")
+                st.warning(f"Uploaded file has {original_rows:,} rows - randomly sampled down to {MAX_UPLOAD_ROWS:,} to keep training times reasonable on shared hosting.")
 
             # Auto clean the null value rows
             df = df.replace("?", pd.NA)
@@ -141,7 +135,7 @@ with tab1:
             report_lines = []
             if high_missing_cols:
                 for col in high_missing_cols:
-                    report_lines.append(f"- **{col}**: {missing_fraction[col]:.0%} missing — column dropped (exceeds {DROP_THRESHOLD:.0%} threshold)")
+                    report_lines.append(f"- **{col}**: {missing_fraction[col]:.0%} missing - column dropped (exceeds {DROP_THRESHOLD:.0%} threshold)")
                 df = df.drop(columns=high_missing_cols)
             
             missing_before = df.isnull().sum()
@@ -167,7 +161,7 @@ with tab1:
                         report_lines.append(f"- **{col}**: {n_missing} missing values imputed with mode ('{stat}')")
             
             if report_lines:
-                st.warning(f"Cleaned up missing data across {len(report_lines)} column(s) — kept all {len(df)} rows.")
+                st.warning(f"Cleaned up missing data across {len(report_lines)} column(s) - kept all {len(df)} rows.")
                 with st.expander("Missing value handling details"):
                     st.markdown("\n".join(report_lines))
             st.session_state['df'] = df
@@ -190,10 +184,10 @@ with tab2:
         col1, col2 = st.columns(2)
         with col1:
             epochs = st.number_input("Epochs", min_value = 1, max_value = 1000, value = 250, step = 5,
-                                      help="Capped at 1000 — this app runs on shared, CPU-only hosting with no per-user limits, so very high epoch counts can tie up the instance for other users.")
+                                        help="Capped at 1000 - this app runs on shared, CPU-only hosting with no per-user limits, so very high epoch counts can tie up the instance for other users.")
         with col2:
             count = st.number_input("Count", min_value = 1, max_value = 50_000, value = 100,
-                                     help="Capped at 50,000 rows to bound memory and download size on shared hosting.")
+                                        help="Capped at 50,000 rows to bound memory and download size on shared hosting.")
         
         with st.expander("⚙️ Advanced CTGAN settings"):
             adv_col1, adv_col2 = st.columns(2)
@@ -239,6 +233,8 @@ with tab2:
 
             st.session_state['generator_model'] = gen
             st.success("Model is ready")
+            if gen.auto_added_categorical_columns:
+                st.info(f"Treated these column(s) as categorical before training, since they're non-numeric and weren't auto-detected as categorical: {', '.join(gen.auto_added_categorical_columns)}")
 
             # Show real loss curve from CTGAN
             loss_df = gen.get_loss_history()
@@ -297,18 +293,18 @@ with tab3:
             if metrics['correlation'] is not None:
                 st.metric("Mean Absolute Correlation Difference", f"{metrics['correlation']['mean_absolute_difference']:.2f}")
             else:
-                st.info("Correlation comparison needs at least one numeric column — this dataset is all categorical.")
+                st.info("Correlation comparison needs at least one numeric column - this dataset is all categorical.")
             st.metric("Median DCR (Distance to Closest Record)", f"{metrics['dcr']['median']:.2f}")
             dcr_ratio = metrics['dcr']['ratio_to_real_baseline']
             if dcr_ratio is not None:
                 if dcr_ratio >= 0.8:
-                    st.caption(f"🟢 Synthetic rows sit about as far from real data as real rows sit from each other (ratio: {dcr_ratio:.2f}) — no memorization signal.")
+                    st.caption(f"🟢 Synthetic rows sit about as far from real data as real rows sit from each other (ratio: {dcr_ratio:.2f}) - no memorization signal.")
                 elif dcr_ratio >= 0.5:
-                    st.caption(f"🟡 Synthetic rows are somewhat closer to real data than real rows are to each other (ratio: {dcr_ratio:.2f}) — worth a closer look.")
+                    st.caption(f"🟡 Synthetic rows are somewhat closer to real data than real rows are to each other (ratio: {dcr_ratio:.2f}) - worth a closer look.")
                 else:
-                    st.caption(f"🔴 Synthetic rows are landing suspiciously close to specific real records (ratio: {dcr_ratio:.2f}) — possible memorization.")
+                    st.caption(f"🔴 Synthetic rows are landing suspiciously close to specific real records (ratio: {dcr_ratio:.2f}) - possible memorization.")
             else:
-                st.caption("Real-to-real baseline unavailable (needs more than one real row) — DCR shown without a reference point.")
+                st.caption("Real-to-real baseline unavailable (needs more than one real row) - DCR shown without a reference point.")
 
             task = metrics['utility']['task']
             col1, col2 = st.columns(2)
@@ -357,9 +353,6 @@ with tab3:
             
             # Plot Real Data as a solid, light color
             ax.hist(st.session_state['df'][selected_col], bins=20, density=True, label="Real", alpha=0.5, color='blue')
-            
-            # Plot Synthetic Data as a thick, dark OUTLINE (step)
-            # This makes it easy to see "through" the data
             ax.hist(st.session_state['synthetic_data'][selected_col], bins=20, density=True, label="Synthetic", histtype='step', linewidth=2, color='black')
             
             ax.set_title("Real (Blue) vs. Synthetic (Black Outline)")
@@ -397,7 +390,7 @@ with tab4:
     if st.session_state["user"] is None:
         st.info("🔒 Log in from the sidebar to view your saved experiment history.")
     elif conn is None:
-        st.warning("⚠️ History unavailable — no database connection.")
+        st.warning("⚠️ History unavailable - no database connection.")
     else:
         # Fetch data from database, scoped to the logged-in user
         try:
